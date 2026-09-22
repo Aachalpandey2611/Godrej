@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: medichat-backend
+    runtime: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: medichat-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: 10080
+      - key: GROQ_API_KEY
+        sync: false          # you fill this in the Render dashboard
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: APP_ENV
+        value: production
+      - key: ALLOWED_ORIGINS
+        sync: false          # fill in after Vercel gives you the frontend URL
+
+databases:
+  - name: medichat-db
+    plan: free
+    region: oregon
+    databaseName: medichat
+    user: medichat_user

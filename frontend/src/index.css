@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-gray-950 text-gray-100 antialiased;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-700 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500;
+  }
+}
+
+@layer components {
+  /* Markdown content inside bot bubbles */
+  .prose-medical p { @apply mb-2 last:mb-0; }
+  .prose-medical ul { @apply list-disc pl-5 mb-2 space-y-1; }
+  .prose-medical ol { @apply list-decimal pl-5 mb-2 space-y-1; }
+  .prose-medical strong { @apply font-semibold text-white; }
+  .prose-medical em { @apply italic; }
+  .prose-medical code { @apply bg-gray-700 px-1 py-0.5 rounded text-sm font-mono; }
+  .prose-medical blockquote {
+    @apply border-l-4 border-brand-500 pl-3 italic text-gray-400 my-2;
+  }
+  .prose-medical h1, .prose-medical h2, .prose-medical h3 {
+    @apply font-semibold text-white mt-3 mb-1;
+  }
+}
