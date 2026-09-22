@@ -1,13 +1,11 @@
 services:
   - type: web
     name: medichat-backend
-    runtime: python
-    pythonVersion: "3.11.9"
+    env: docker
+    dockerfilePath: ./backend/Dockerfile
     region: oregon
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    buildCommand: ""
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
@@ -21,13 +19,13 @@ services:
       - key: JWT_EXPIRE_MINUTES
         value: 10080
       - key: GROQ_API_KEY
-        sync: false          # you fill this in the Render dashboard
+        sync: false
       - key: GROQ_MODEL
         value: openai/gpt-oss-20b
       - key: APP_ENV
         value: production
       - key: ALLOWED_ORIGINS
-        sync: false          # fill in after Vercel gives you the frontend URL
+        sync: false
 
 databases:
   - name: medichat-db
