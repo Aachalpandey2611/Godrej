@@ -49,8 +49,36 @@ def _get_groq_key() -> str:
 
 
 def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
-    """Call Google Gemini REST API using httpx."""
-    # Convert chat history into Gemini contents format
+    """Call Google Gemini API (tries OpenAI-compatible endpoint then native REST endpoints)."""
+    # 1. Try Gemini OpenAI-compatible endpoint first
+    openai_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {gemini_key}",
+        "Content-Type": "application/json",
+    }
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
+    for model in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
+        try:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": 1024,
+                "temperature": 0.7,
+            }
+            with httpx.Client(timeout=30.0) as client:
+                res = client.post(openai_url, json=payload, headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        return choices[0]["message"]["content"]
+                else:
+                    logger.warning(f"Gemini OpenAI endpoint ({model}) status {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.warning(f"Gemini OpenAI endpoint {model} failed: {e}")
+            continue
+
+    # 2. Try Gemini Native REST endpoint as backup
     contents = []
     for msg in conversation_history:
         role = "user" if msg["role"] == "user" else "model"
@@ -59,8 +87,15 @@ def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
             "parts": [{"text": msg["content"]}],
         })
 
+    native_models = [
+        "gemini-1.5-flash-latest",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash-exp",
+        "gemini-1.5-flash-8b",
+        "gemini-pro",
+    ]
     last_err = None
-    for model in GEMINI_MODELS:
+    for model in native_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
         payload = {
             "system_instruction": {
@@ -83,16 +118,17 @@ def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
                         if parts:
                             return parts[0].get("text", "")
                 else:
-                    logger.warning(f"Gemini {model} returned {res.status_code}: {res.text}")
-                    last_err = Exception(f"Gemini API returned {res.status_code}: {res.text}")
+                    logger.warning(f"Gemini native ({model}) returned {res.status_code}: {res.text}")
+                    last_err = Exception(f"Gemini API ({model}) returned {res.status_code}: {res.text}")
         except Exception as e:
-            logger.warning(f"Gemini {model} call failed: {e}")
+            logger.warning(f"Gemini native {model} call failed: {e}")
             last_err = e
             continue
 
     if last_err:
         raise last_err
-    raise RuntimeError("Gemini API call failed.")
+    raise RuntimeError("Gemini API call failed across all models.")
+
 
 
 def _call_groq(conversation_history: list[dict], groq_key: str) -> str:
