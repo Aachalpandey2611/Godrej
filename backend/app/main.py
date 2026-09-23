@@ -40,7 +40,7 @@ app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.origins_list,
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -61,7 +61,13 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
-@app.get("/health", tags=["health"])
+# ── Health check & Root ───────────────────────────────────────────────────────
+@app.api_route("/", methods=["GET", "HEAD"], tags=["health"])
+def root():
+    return {"status": "ok", "service": "MediChat API", "message": "Backend is live and running!"}
+
+
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
 def health():
     return {"status": "ok", "service": "MediChat API"}
+
