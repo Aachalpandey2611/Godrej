@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # Groq
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama3-70b-8192"
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
 
     # App
     APP_ENV: str = "development"
