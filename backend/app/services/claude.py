@@ -1,5 +1,6 @@
 import os
 import logging
+import httpx
 from groq import Groq, AuthenticationError
 
 from app.core.config import settings
@@ -18,30 +19,85 @@ Rules you must follow at all times:
 - When appropriate, suggest seeking emergency care (call 911 or visit the nearest ER) for life-threatening situations.
 """
 
-# Only active, supported Groq models (all old decommissioned models removed)
+# Only active, supported Groq models
 VALID_GROQ_MODELS = [
     "llama-3.1-8b-instant",
     "llama-3.3-70b-versatile",
     "gemma2-9b-it",
 ]
 
+# Supported Gemini models
+GEMINI_MODELS = [
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+]
 
-def _get_api_key() -> str:
+
+def _get_gemini_key() -> str:
+    key = settings.GEMINI_API_KEY.strip() if settings.GEMINI_API_KEY else ""
+    if not key:
+        key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    return key
+
+
+def _get_groq_key() -> str:
     key = settings.GROQ_API_KEY.strip() if settings.GROQ_API_KEY else ""
     if not key:
         key = os.environ.get("GROQ_API_KEY", "").strip()
     return key
 
 
-def get_bot_reply(conversation_history: list[dict]) -> str:
-    """
-    Send the conversation history to Groq and return the assistant reply.
-    """
-    api_key = _get_api_key()
-    if not api_key:
-        raise ValueError("GROQ_API_KEY is not configured. Please set GROQ_API_KEY in Render environment settings.")
+def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
+    """Call Google Gemini REST API using httpx."""
+    # Convert chat history into Gemini contents format
+    contents = []
+    for msg in conversation_history:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({
+            "role": role,
+            "parts": [{"text": msg["content"]}],
+        })
 
-    client = Groq(api_key=api_key)
+    last_err = None
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": SYSTEM_PROMPT}]
+            },
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 1024,
+            }
+        }
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                res = client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            return parts[0].get("text", "")
+                else:
+                    logger.warning(f"Gemini {model} returned {res.status_code}: {res.text}")
+                    last_err = Exception(f"Gemini API returned {res.status_code}: {res.text}")
+        except Exception as e:
+            logger.warning(f"Gemini {model} call failed: {e}")
+            last_err = e
+            continue
+
+    if last_err:
+        raise last_err
+    raise RuntimeError("Gemini API call failed.")
+
+
+def _call_groq(conversation_history: list[dict], groq_key: str) -> str:
+    """Call Groq API with valid models."""
+    client = Groq(api_key=groq_key)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
 
     models_to_try = []
@@ -62,9 +118,9 @@ def get_bot_reply(conversation_history: list[dict]) -> str:
             )
             return response.choices[0].message.content
         except AuthenticationError as auth_err:
-            logger.error(f"Groq authentication failed: {auth_err}")
+            logger.error(f"Groq auth error: {auth_err}")
             raise ValueError(
-                "Invalid Groq API Key. Please generate a new key on console.groq.com and update GROQ_API_KEY in Render."
+                "Invalid Groq API Key. Please check GROQ_API_KEY in Render."
             ) from auth_err
         except Exception as exc:
             logger.warning(f"Groq model {model_name} failed: {exc}")
@@ -74,6 +130,34 @@ def get_bot_reply(conversation_history: list[dict]) -> str:
 
     if first_error:
         raise first_error
-    raise RuntimeError("No Groq models could respond. Please check your Groq API key and account status.")
+    raise RuntimeError("No Groq models could respond.")
+
+
+def get_bot_reply(conversation_history: list[dict]) -> str:
+    """
+    Send the conversation history to Gemini or Groq and return the reply.
+    Prefers Gemini if GEMINI_API_KEY is present, falls back to Groq or vice versa.
+    """
+    gemini_key = _get_gemini_key()
+    groq_key = _get_groq_key()
+
+    if not gemini_key and not groq_key:
+        raise ValueError("Neither GEMINI_API_KEY nor GROQ_API_KEY is configured in Render environment variables.")
+
+    # 1. Try Gemini if key exists
+    if gemini_key:
+        try:
+            return _call_gemini(conversation_history, gemini_key)
+        except Exception as e:
+            logger.warning(f"Gemini failed, trying Groq fallback if available: {e}")
+            if not groq_key:
+                raise e
+
+    # 2. Try Groq if key exists
+    if groq_key:
+        return _call_groq(conversation_history, groq_key)
+
+    raise RuntimeError("Unable to generate response from AI providers.")
+
 
 

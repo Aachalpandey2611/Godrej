@@ -11,9 +11,10 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 10080  # 7 days
 
-    # Groq
+    # Groq & Gemini AI
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.1-8b-instant"
+    GEMINI_API_KEY: str = ""
 
     # App
     APP_ENV: str = "development"
