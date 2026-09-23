@@ -48,37 +48,55 @@ def _get_groq_key() -> str:
     return key
 
 
-def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
-    """Call Google Gemini API (tries OpenAI-compatible endpoint then native REST endpoints)."""
-    # 1. Try Gemini OpenAI-compatible endpoint first
-    openai_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {gemini_key}",
-        "Content-Type": "application/json",
-    }
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
-    for model in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
-        try:
-            payload = {
-                "model": model,
-                "messages": messages,
-                "max_tokens": 1024,
-                "temperature": 0.7,
-            }
-            with httpx.Client(timeout=30.0) as client:
-                res = client.post(openai_url, json=payload, headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        return choices[0]["message"]["content"]
-                else:
-                    logger.warning(f"Gemini OpenAI endpoint ({model}) status {res.status_code}: {res.text}")
-        except Exception as e:
-            logger.warning(f"Gemini OpenAI endpoint {model} failed: {e}")
-            continue
+_CACHED_GEMINI_MODEL: str | None = None
 
-    # 2. Try Gemini Native REST endpoint as backup
+
+def _get_active_gemini_models(gemini_key: str) -> list[str]:
+    """Fetch active generateContent models directly from Google Gemini API."""
+    global _CACHED_GEMINI_MODEL
+    if _CACHED_GEMINI_MODEL:
+        return [_CACHED_GEMINI_MODEL]
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={gemini_key}"
+        with httpx.Client(timeout=10.0) as client:
+            res = client.get(url)
+            if res.status_code == 200:
+                data = res.json()
+                models = []
+                for m in data.get("models", []):
+                    methods = m.get("supportedGenerationMethods", [])
+                    name = m.get("name", "")
+                    if "generateContent" in methods and "gemini" in name:
+                        models.append(name)
+                # Sort preferred: 2.5-flash, 2.0-flash, 1.5-flash, others
+                def rank(n):
+                    if "flash" in n and "2." in n:
+                        return 0
+                    if "1.5-flash" in n:
+                        return 1
+                    if "flash" in n:
+                        return 2
+                    return 3
+
+                models.sort(key=rank)
+                if models:
+                    _CACHED_GEMINI_MODEL = models[0]
+                    logger.info(f"Discovered active Gemini models: {models[:3]}, selected: {models[0]}")
+                    return models
+    except Exception as err:
+        logger.warning(f"Failed to query Gemini model list: {err}")
+
+    # Fallback defaults if list endpoint fails
+    return [
+        "models/gemini-1.5-flash",
+        "models/gemini-2.0-flash",
+        "models/gemini-1.5-flash-latest",
+    ]
+
+
+def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
+    """Call Google Gemini API using dynamically discovered active models."""
     contents = []
     for msg in conversation_history:
         role = "user" if msg["role"] == "user" else "model"
@@ -87,16 +105,14 @@ def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
             "parts": [{"text": msg["content"]}],
         })
 
-    native_models = [
-        "gemini-1.5-flash-latest",
-        "gemini-1.5-flash",
-        "gemini-2.0-flash-exp",
-        "gemini-1.5-flash-8b",
-        "gemini-pro",
-    ]
+    active_models = _get_active_gemini_models(gemini_key)
     last_err = None
-    for model in native_models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_key}"
+
+    for model_path in active_models:
+        # model_path is like "models/gemini-1.5-flash" or "gemini-1.5-flash"
+        clean_name = model_path if model_path.startswith("models/") else f"models/{model_path}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/{clean_name}:generateContent?key={gemini_key}"
+
         payload = {
             "system_instruction": {
                 "parts": [{"text": SYSTEM_PROMPT}]
@@ -107,6 +123,7 @@ def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
                 "maxOutputTokens": 1024,
             }
         }
+
         try:
             with httpx.Client(timeout=30.0) as client:
                 res = client.post(url, json=payload)
@@ -116,18 +133,21 @@ def _call_gemini(conversation_history: list[dict], gemini_key: str) -> str:
                     if candidates:
                         parts = candidates[0].get("content", {}).get("parts", [])
                         if parts:
+                            global _CACHED_GEMINI_MODEL
+                            _CACHED_GEMINI_MODEL = clean_name
                             return parts[0].get("text", "")
                 else:
-                    logger.warning(f"Gemini native ({model}) returned {res.status_code}: {res.text}")
-                    last_err = Exception(f"Gemini API ({model}) returned {res.status_code}: {res.text}")
+                    logger.warning(f"Gemini {clean_name} returned {res.status_code}: {res.text}")
+                    last_err = Exception(f"Gemini API ({clean_name}) error {res.status_code}: {res.text}")
         except Exception as e:
-            logger.warning(f"Gemini native {model} call failed: {e}")
+            logger.warning(f"Gemini call to {clean_name} failed: {e}")
             last_err = e
             continue
 
     if last_err:
         raise last_err
-    raise RuntimeError("Gemini API call failed across all models.")
+    raise RuntimeError("Gemini API call failed across all available models.")
+
 
 
 
