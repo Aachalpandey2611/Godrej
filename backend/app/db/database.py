@@ -3,8 +3,13 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from app.core.config import settings
 
+# Render gives postgres:// but SQLAlchemy 2.x needs postgresql://
+_db_url = settings.DATABASE_URL
+if _db_url and _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql://", 1)
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    _db_url,
     pool_pre_ping=True,       # detect stale connections
     pool_size=10,
     max_overflow=20,
