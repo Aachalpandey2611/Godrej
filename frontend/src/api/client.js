@@ -16,14 +16,10 @@ client.interceptors.request.use((config) => {
   return config
 })
 
-// On 401 — clear token and redirect to login
+// On 401 — just reject silently (no auth redirect needed)
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('medichat_token')
-      window.location.href = '/login'
-    }
     return Promise.reject(err)
   }
 )
