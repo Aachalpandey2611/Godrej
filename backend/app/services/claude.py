@@ -1,5 +1,6 @@
+import os
 import logging
-from groq import Groq
+from groq import Groq, AuthenticationError
 
 from app.core.config import settings
 
@@ -17,36 +18,40 @@ Rules you must follow at all times:
 - When appropriate, suggest seeking emergency care (call 911 or visit the nearest ER) for life-threatening situations.
 """
 
-FALLBACK_MODELS = [
+# Only active, supported Groq models (all old decommissioned models removed)
+VALID_GROQ_MODELS = [
     "llama-3.1-8b-instant",
-    "llama3-8b-8192",
     "llama-3.3-70b-versatile",
     "gemma2-9b-it",
-    "mixtral-8x7b-32768",
 ]
 
 
-def _get_client() -> Groq:
-    api_key = settings.GROQ_API_KEY.strip() if settings.GROQ_API_KEY else ""
-    return Groq(api_key=api_key)
+def _get_api_key() -> str:
+    key = settings.GROQ_API_KEY.strip() if settings.GROQ_API_KEY else ""
+    if not key:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+    return key
 
 
 def get_bot_reply(conversation_history: list[dict]) -> str:
     """
     Send the conversation history to Groq and return the assistant reply.
-    Automatically tries fallback models if the primary model fails or is unavailable.
     """
-    client = _get_client()
+    api_key = _get_api_key()
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not configured. Please set GROQ_API_KEY in Render environment settings.")
+
+    client = Groq(api_key=api_key)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history
 
     models_to_try = []
-    if settings.GROQ_MODEL and settings.GROQ_MODEL.strip():
+    if settings.GROQ_MODEL and settings.GROQ_MODEL.strip() in VALID_GROQ_MODELS:
         models_to_try.append(settings.GROQ_MODEL.strip())
-    for m in FALLBACK_MODELS:
+    for m in VALID_GROQ_MODELS:
         if m not in models_to_try:
             models_to_try.append(m)
 
-    last_error = None
+    first_error = None
     for model_name in models_to_try:
         try:
             response = client.chat.completions.create(
@@ -56,12 +61,19 @@ def get_bot_reply(conversation_history: list[dict]) -> str:
                 temperature=0.7,
             )
             return response.choices[0].message.content
+        except AuthenticationError as auth_err:
+            logger.error(f"Groq authentication failed: {auth_err}")
+            raise ValueError(
+                "Invalid Groq API Key. Please generate a new key on console.groq.com and update GROQ_API_KEY in Render."
+            ) from auth_err
         except Exception as exc:
             logger.warning(f"Groq model {model_name} failed: {exc}")
-            last_error = exc
+            if first_error is None:
+                first_error = exc
             continue
 
-    if last_error:
-        raise last_error
-    raise RuntimeError("No Groq models available or API call failed.")
+    if first_error:
+        raise first_error
+    raise RuntimeError("No Groq models could respond. Please check your Groq API key and account status.")
+
 
