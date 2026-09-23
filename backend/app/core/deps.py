@@ -23,7 +23,7 @@ def _get_or_create_guest(db: Session) -> User:
             id=GUEST_USER_ID,
             email=GUEST_EMAIL,
             name=GUEST_NAME,
-            hashed_password="",   # no password for guest
+            password_hash="",   # no password for guest
         )
         db.add(user)
         db.commit()
