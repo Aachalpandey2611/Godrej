@@ -2,14 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite",
-  "rewrites": [
-    { "source": "/.well-known/:file", "destination": "/.well-known/:file" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ],
-  "headers": [
-    {
-      "source": "/.well-known/(.*)",
-      "headers": [{ "key": "Content-Type", "value": "text/plain" }]
-    }
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/.well-known/(.*)", "dest": "/.well-known/$1" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
